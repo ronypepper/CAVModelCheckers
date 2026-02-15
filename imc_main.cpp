@@ -20,7 +20,9 @@ int main(int argc, char** argv)
 
     InterpolationBasedModelChecker imc(filename);
     int result = imc.detect_fixed_point(k, true, -1, timeout, true);
-    if (result == 2)
+    if (result == -1)
+        printf("ERROR");
+    else if (result == 2)
         printf("TIMEOUT");
     else if (result == 0)
         printf("OK\n");

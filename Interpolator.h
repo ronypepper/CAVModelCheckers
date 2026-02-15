@@ -5,13 +5,22 @@
 #pragma once
 #include "Proof.h"
 
+class InterpolationBasedModelChecker;
+
 struct Interpolator : ProofTraverser {
-    int num_vars_in_one_state; // Number of variables in one state of the model (fixed)
+    const InterpolationBasedModelChecker& imc; // Model checker that uses this Interpolator
+
+    // Ranges of pivot variable partitions
+    int partition_shared_start;
+    int partition_shared_end;
+    int partition_b_start;
+    int partition_b_end;
+
     int num_tseitin_vars; // Number of currently introduced tseitin variables
     int next_tseitin_var; // Next free variable
 
     // Interpolants corresponding to model/resolved clauses.
-    // Either 0 (false), 1 (true), a 0th state model variable or a tseitin variable
+    // Either 0 (false), 1 (true), a 0th state model literal or a tseitin literal
     vec<int> interpolants;
 
     // Clauses encoding sub-interpolations as equivalences to tseitin variables
@@ -20,9 +29,7 @@ struct Interpolator : ProofTraverser {
     // Root and resolved clauses of the model
     vec<vec<Lit> > model_clauses;
 
-    Interpolator(int num_vars_in_one_state, int next_tseitin_var) : num_vars_in_one_state(num_vars_in_one_state),
-                                                                    num_tseitin_vars(0),
-                                                                    next_tseitin_var(next_tseitin_var) {}
+    Interpolator(const InterpolationBasedModelChecker& imc, int next_tseitin_var, int k);
 
     void root(const vec<Lit>& c);
 
@@ -35,5 +42,5 @@ private:
 
     int encode_and_interpolant(int I1, int I2);
 
-    int encode_pivot_interpolant(int x, int I_pos, int I_neg);
+    int encode_pivot_interpolant(Var x, int I_pos, int I_neg);
 };

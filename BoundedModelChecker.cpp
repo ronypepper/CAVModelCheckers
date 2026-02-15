@@ -11,146 +11,169 @@
 using namespace std;
 
 BoundedModelChecker::BoundedModelChecker(const std::string& filename) {
+    is_valid = false;
     // Construct initial states, transitions and property from AIGer file
-    ifstream file(filename);
-    if (file.is_open()) {
-        string line, word;
-        stringstream line_stream;
+    try {
+        ifstream file(filename);
+        if (file.is_open()) {
+            string line, word;
+            stringstream line_stream;
 
-        // Read AIGer header
-        getline(file, line);
-        line_stream = stringstream(line);
-        getline(line_stream, word, ' '); // Skip aag
-        getline(line_stream, word, ' '); // Get maximum variable index
-        num_vars_in_one_state = stoi(word);
-        getline(line_stream, word, ' '); // Get number of input variables
-        int num_inputs = stoi(word);
-        getline(line_stream, word, ' '); // Get number of state variables (latches)
-        int num_latches = stoi(word);
-        getline(line_stream, word, ' '); // Get number of output variables (must be one)
-        assert(stoi(word) == 1);
-        getline(line_stream, word, ' '); // Get number of AND gates
-        int num_and_gates = stoi(word);
-
-        // Skip input variables
-        for (int i = 0; i < num_inputs; i++)
-            getline(file, line);
-
-        // Process latches
-        vec<int> latch_vars;
-        for (int i = 0; i < num_latches; i++) {
+            // Read AIGer header
             getline(file, line);
             line_stream = stringstream(line);
-            getline(line_stream, word, ' '); // Latch to be written
-            int latch = stoi(word);
-            latch_vars.push(latch);
-            getline(line_stream, word, ' '); // Next state of latch
-            int next_state = stoi(word);
+            getline(line_stream, word, ' '); // Skip aag
+            getline(line_stream, word, ' '); // Get maximum variable index
+            num_vars_in_one_state = stoi(word);
+            getline(line_stream, word, ' '); // Get number of input variables
+            int num_inputs = stoi(word);
+            getline(line_stream, word, ' '); // Get number of state variables (latches)
+            int num_latches = stoi(word);
+            getline(line_stream, word, ' '); // Get number of output variables (must be one)
+            assert(stoi(word) == 1);
+            getline(line_stream, word, ' '); // Get number of AND gates
+            int num_and_gates = stoi(word);
 
-            // Encode latch update as CNF and add to transitions
-            int latch_next_step = latch + 2 * num_vars_in_one_state;
-            latch_transitions.push();
-            vec<int>& cl_1 = latch_transitions.last();
-            if (next_state == 0) // next state always false; one clause in CNF
-                cl_1.push(latch_next_step ^ 1);
-            else if (next_state == 1) // next state always true; one clause in CNF
-                cl_1.push(latch_next_step);
-            else { // (latch of next step <-> next_state; two clauses in CNF)
-                cl_1.push(latch_next_step ^ 1);
-                cl_1.push(next_state);
+            // Skip input variables
+            for (int i = 0; i < num_inputs; i++)
+                getline(file, line);
+
+            // Process latches
+            vec<int> latch_vars;
+            for (int i = 0; i < num_latches; i++) {
+                getline(file, line);
+                line_stream = stringstream(line);
+                getline(line_stream, word, ' '); // Latch to be written
+                int latch = stoi(word);
+                latch_vars.push(latch);
+                getline(line_stream, word, ' '); // Next state of latch
+                int next_state = stoi(word);
+
+                // Encode latch update as CNF and add to transitions
+                int latch_next_step = latch + 2 * num_vars_in_one_state;
                 latch_transitions.push();
-                vec<int>& cl_2 = latch_transitions.last();
-                cl_2.push(latch_next_step);
-                cl_2.push(next_state ^ 1);
+                vec<int>& cl_1 = latch_transitions.last();
+                if (next_state == 0) // next state always false; one clause in CNF
+                    cl_1.push(latch_next_step ^ 1);
+                else if (next_state == 1) // next state always true; one clause in CNF
+                    cl_1.push(latch_next_step);
+                else { // (latch of next step <-> next_state; two clauses in CNF)
+                    cl_1.push(latch_next_step ^ 1);
+                    cl_1.push(next_state);
+                    latch_transitions.push();
+                    vec<int>& cl_2 = latch_transitions.last();
+                    cl_2.push(latch_next_step);
+                    cl_2.push(next_state ^ 1);
+                }
             }
-        }
 
-        // Initial state is all latches set to false.
-        // Encode (x <-> ~l1 AND ~l2 AND ...) to obtain single variable x resembling initial state.
-        // x (INIT_STATE_VAR) is chosen as variable index 0, since it is used by MINISAT but not by AIGer
-        if (latch_vars.size() > 0) {
-            // Encode (x => ~l1 AND ~l2 AND ...) as ((~x OR ~l1) AND (~x OR ~l2) AND ...)
-            for (int i = 0; i < latch_vars.size(); i++) {
+            // Initial state is all latches set to false.
+            // Encode (x <-> ~l1 AND ~l2 AND ...) to obtain single variable x resembling initial state.
+            // x (INIT_STATE_VAR) is chosen as variable index 0, since it is used by MINISAT but not by AIGer
+            if (latch_vars.size() > 0) {
+                // Encode (x => ~l1 AND ~l2 AND ...) as ((~x OR ~l1) AND (~x OR ~l2) AND ...)
+                for (int i = 0; i < latch_vars.size(); i++) {
+                    initial_state_encoding.push();
+                    vec<Lit>& cl = initial_state_encoding.last();
+                    cl.push(toLit(1));
+                    cl.push(toLit(latch_vars[i] ^ 1));
+                }
+                // Encode (x <= ~l1 AND ~l2 AND ...) as (x OR l1 OR l2 OR ...)
                 initial_state_encoding.push();
-                vec<Lit>& cl = initial_state_encoding.last();
-                cl.push(toLit(1));
-                cl.push(toLit(latch_vars[i] ^ 1));
+                vec<Lit>& cl_1 = initial_state_encoding.last();
+                cl_1.push(toLit(INIT_STATE_VAR));
+                for (int i = 0; i < latch_vars.size(); i++)
+                    cl_1.push(toLit(latch_vars[i]));
             }
-            // Encode (x <= ~l1 AND ~l2 AND ...) as (x OR l1 OR l2 OR ...)
-            initial_state_encoding.push();
-            vec<Lit>& cl_1 = initial_state_encoding.last();
-            cl_1.push(toLit(INIT_STATE_VAR));
-            for (int i = 0; i < latch_vars.size(); i++)
-                cl_1.push(toLit(latch_vars[i]));
-        }
 
-        // Store output as (already negated) property (output is “bad state” detector)
-        getline(file, line);
-        property = stoi(line);
-        assert(property > 1); // property of true or false is invalid
+            // Determine continuous latch variable range (needed for efficient partition check in Interpolator)
+            first_latch_var = latch_vars[0] / 2;
+            last_latch_var = latch_vars.last() / 2;
+            int l1 = latch_vars[0];
+            for (int i = 1; i < latch_vars.size(); i++) {
+                int l2 = latch_vars[i];
+                if (l1 + 2 != l2) {
+                    // Latch variables not continuous
+                    first_latch_var = -1, last_latch_var = -1;
+                    break;
+                }
+                l1 = l2;
+            }
 
-        // Process AND gates
-        for (int i = 0; i < num_and_gates; i++) {
+            // Store output as (already negated) property (output is “bad state” detector)
             getline(file, line);
-            line_stream = stringstream(line);
-            getline(line_stream, word, ' '); // Gate output variable
-            int gate_out = stoi(word);
-            getline(line_stream, word, ' '); // Gate input 1 variable
-            int gate_in1 = stoi(word);
-            getline(line_stream, word, ' '); // Gate input 2 variable
-            int gate_in2 = stoi(word);
+            property = stoi(line);
+            assert(property > 1); // property of true or false is invalid
 
-            // Encode AND gate as CNF and add to transitions
-            and_gate_clauses.push();
-            vec<int>& cl_1 = and_gate_clauses.last();
-            if (gate_in1 == 0 || gate_in2 == 0) {
-                cl_1.push(gate_out ^ 1);
-            }
-            else if (gate_in1 == 1 && gate_in2 == 1) {
-                cl_1.push(gate_out);
-            }
-            else if (gate_in1 == 1) { // (gate_out <-> gate_in2; two clauses in CNF)
-                cl_1.push(gate_out ^ 1);
-                cl_1.push(gate_in2);
+            // Process AND gates
+            for (int i = 0; i < num_and_gates; i++) {
+                getline(file, line);
+                line_stream = stringstream(line);
+                getline(line_stream, word, ' '); // Gate output variable
+                int gate_out = stoi(word);
+                getline(line_stream, word, ' '); // Gate input 1 variable
+                int gate_in1 = stoi(word);
+                getline(line_stream, word, ' '); // Gate input 2 variable
+                int gate_in2 = stoi(word);
+
+                // Encode AND gate as CNF and add to transitions
                 and_gate_clauses.push();
-                vec<int>& cl_2 = and_gate_clauses.last();
-                cl_2.push(gate_out);
-                cl_2.push(gate_in2 ^ 1);
+                vec<int>& cl_1 = and_gate_clauses.last();
+                if (gate_in1 == 0 || gate_in2 == 0) {
+                    cl_1.push(gate_out ^ 1);
+                }
+                else if (gate_in1 == 1 && gate_in2 == 1) {
+                    cl_1.push(gate_out);
+                }
+                else if (gate_in1 == 1) { // (gate_out <-> gate_in2; two clauses in CNF)
+                    cl_1.push(gate_out ^ 1);
+                    cl_1.push(gate_in2);
+                    and_gate_clauses.push();
+                    vec<int>& cl_2 = and_gate_clauses.last();
+                    cl_2.push(gate_out);
+                    cl_2.push(gate_in2 ^ 1);
+                }
+                else if (gate_in2 == 1) { // (gate_out <-> gate_in1; two clauses in CNF)
+                    cl_1.push(gate_out ^ 1);
+                    cl_1.push(gate_in1);
+                    and_gate_clauses.push();
+                    vec<int>& cl_2 = and_gate_clauses.last();
+                    cl_2.push(gate_out);
+                    cl_2.push(gate_in1 ^ 1);
+                }
+                else { // (gate_out <-> (gate_in1 & gate_in2); three clauses in CNF)
+                    cl_1.push(gate_out ^ 1);
+                    cl_1.push(gate_in1);
+                    and_gate_clauses.push();
+                    vec<int>& cl_2 = and_gate_clauses.last();
+                    cl_2.push(gate_out ^ 1);
+                    cl_2.push(gate_in2);
+                    and_gate_clauses.push();
+                    vec<int>& cl_3 = and_gate_clauses.last();
+                    cl_3.push(gate_out);
+                    cl_3.push(gate_in1 ^ 1);
+                    cl_3.push(gate_in2 ^ 1);
+                }
             }
-            else if (gate_in2 == 1) { // (gate_out <-> gate_in1; two clauses in CNF)
-                cl_1.push(gate_out ^ 1);
-                cl_1.push(gate_in1);
-                and_gate_clauses.push();
-                vec<int>& cl_2 = and_gate_clauses.last();
-                cl_2.push(gate_out);
-                cl_2.push(gate_in1 ^ 1);
-            }
-            else { // (gate_out <-> (gate_in1 & gate_in2); three clauses in CNF)
-                cl_1.push(gate_out ^ 1);
-                cl_1.push(gate_in1);
-                and_gate_clauses.push();
-                vec<int>& cl_2 = and_gate_clauses.last();
-                cl_2.push(gate_out ^ 1);
-                cl_2.push(gate_in2);
-                and_gate_clauses.push();
-                vec<int>& cl_3 = and_gate_clauses.last();
-                cl_3.push(gate_out);
-                cl_3.push(gate_in1 ^ 1);
-                cl_3.push(gate_in2 ^ 1);
-            }
+
+            is_valid = true;
+            file.close();
         }
-
-        file.close();
+        else {
+            printf("ERROR: File could not be opened!\n");
+        }
     }
-    else {
-        printf("ERROR: File could not be opened!");
-        exit(1);
+    catch(...) {
+        printf("ERROR: An exception occurred while parsing: %s !\n", filename.c_str());
     }
 }
 
-bool BoundedModelChecker::solve(int k, bool check_properties, bool skip_initial_property,
+int BoundedModelChecker::solve(int k, bool check_properties, bool skip_initial_property,
                                 vec<vec<vec<Lit> > > *extra_clauses, int num_extra_vars, bool override_initial_state,
                                 Interpolator *interpolator, bool print_info) {
+    if (!is_valid)
+        return -1;
+
     if (k < 0) // Clip minimum k
         k = 0;
 
@@ -173,7 +196,7 @@ bool BoundedModelChecker::solve(int k, bool check_properties, bool skip_initial_
         if (!solver.okay()) {
             if (print_info)
                 printf("UNSAT while adding initial states\n");
-            return false; // UNSAT
+            return 0; // UNSAT
         }
     }
 
@@ -185,7 +208,7 @@ bool BoundedModelChecker::solve(int k, bool check_properties, bool skip_initial_
         if (!solver.okay()) {
             if (print_info)
                 printf("UNSAT while enforcing initial states\n");
-            return false; // UNSAT
+            return 0; // UNSAT
         }
     }
 
@@ -206,7 +229,7 @@ bool BoundedModelChecker::solve(int k, bool check_properties, bool skip_initial_
             if (!solver.okay()) {
                 if (print_info)
                     printf("UNSAT while adding AND gate clauses\n");
-                return false; // UNSAT
+                return 0; // UNSAT
             }
         }
 
@@ -231,7 +254,7 @@ bool BoundedModelChecker::solve(int k, bool check_properties, bool skip_initial_
             if (!solver.okay()) {
                 if (print_info)
                     printf("UNSAT while adding transition clauses\n");
-                return false; // UNSAT
+                return 0; // UNSAT
             }
         }
 
@@ -250,7 +273,7 @@ bool BoundedModelChecker::solve(int k, bool check_properties, bool skip_initial_
             if (!solver.okay()) {
                 if (print_info)
                     printf("UNSAT while adding properties\n");
-                return false; // UNSAT
+                return 0; // UNSAT
             }
         }
     }
@@ -264,7 +287,7 @@ bool BoundedModelChecker::solve(int k, bool check_properties, bool skip_initial_
                 if (!solver.okay()) {
                     if (print_info)
                         printf("UNSAT while adding extra clauses\n");
-                    return false; // UNSAT
+                    return 0; // UNSAT
                 }
             }
         }
@@ -279,5 +302,8 @@ bool BoundedModelChecker::solve(int k, bool check_properties, bool skip_initial_
     if (print_info && !solver.okay())
         printf("UNSAT after solving\n");
 
-    return solver.okay(); // SAT or UNSAT
+    if (solver.okay()) {
+        return 1; // SAT
+    }
+    return 0; // UNSAT
 }

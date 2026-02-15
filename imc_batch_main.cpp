@@ -74,16 +74,20 @@ int main(int argc, char** argv)
 
     // Perform interpolated model checking on all valid files with timeout
     printf("Performing interpolated model checking on %lu files.\n", num_total);
-    int num_correct = 0, num_wrong = 0, num_timeout = 0, num_too_many_vars = 0, i = 0;
+    int num_correct = 0, num_wrong = 0, num_timeout = 0, num_errors = 0, num_too_many_vars = 0, i = 0;
     for (auto const& filename : valid_filenames) {
         InterpolationBasedModelChecker imc(filename);
-        if (max_vars_in_one_state > 0 && imc.getNumVarsInOneState() > max_vars_in_one_state) {
+        if (max_vars_in_one_state > 0 && imc.num_vars_in_one_state > max_vars_in_one_state) {
             num_too_many_vars++;
             printf("TOO MANY VARS");
         }
         else {
             int result = imc.detect_fixed_point(k, true, -1, timeout, false);
-            if (result == 2) {
+            if (result == -1) {
+                num_errors++;
+                printf("ERROR        ");
+            }
+            else if (result == 2) {
                 num_timeout++;
                 printf("TIMEOUT      ");
             }
@@ -106,5 +110,6 @@ int main(int argc, char** argv)
            "WRONG        : %d\n"
            "TIMEOUT      : %d\n"
            "TOO MANY VARS: %d\n"
-           "------  Done  ------\n", num_correct, num_wrong, num_timeout, num_too_many_vars);
+           "ERRORS       : %d\n"
+           "------  Done  ------\n", num_correct, num_wrong, num_timeout, num_too_many_vars, num_errors);
 }

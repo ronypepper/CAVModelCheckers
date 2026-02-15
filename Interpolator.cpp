@@ -3,7 +3,17 @@
 //
 
 #include "Interpolator.h"
+
+#include "InterpolationBasedModelChecker.h"
 #include "Sort.h"
+
+Interpolator::Interpolator(const InterpolationBasedModelChecker &imc, int next_tseitin_var, int k) : imc(imc),
+    num_tseitin_vars(0), next_tseitin_var(next_tseitin_var) {
+    partition_shared_start = imc.first_latch_var + imc.num_vars_in_one_state;
+    partition_shared_end = imc.last_latch_var + imc.num_vars_in_one_state;
+    partition_b_start = partition_shared_end + 1;
+    partition_b_end = imc.num_vars_in_one_state * (k + 1);
+}
 
 void Interpolator::root(const vec<Lit> &c) {
     // Interpolants of root clauses are either True if they are part of the B
@@ -12,10 +22,10 @@ void Interpolator::root(const vec<Lit> &c) {
     // to the 0th state.
 
     // Determine interpolant of root clause
-    int interpolant = 1; // True - belongs to B partition
+    int interpolant = 0; // False - belongs to A partition
     for (int i = 0; i < c.size(); i++) {
-        if (var(c[i]) <= 2 * num_vars_in_one_state + 1) {
-            interpolant = 0; // False - belongs to A partition
+        if (var(c[i]) >= partition_b_start && var(c[i]) <= partition_b_end) {
+            interpolant = 1; // True - belongs to B partition
             break;
         }
     }
@@ -43,13 +53,7 @@ void Interpolator::chain(const vec<ClauseId> &cs, const vec<Var> &xs) {
     int new_interpolant = interpolants[cs[0]];
     for (int i = 0; i < xs.size(); i++) {
         // Interpolate
-        if (xs[i] <= 2 * num_vars_in_one_state + 1) { // pivot variable only in A partition
-            new_interpolant = encode_or_interpolant(new_interpolant, interpolants[cs[i+1]]);
-        }
-        else if (xs[i] > 4 * num_vars_in_one_state + 1) { // pivot variable only in B partition
-            new_interpolant = encode_and_interpolant(new_interpolant, interpolants[cs[i+1]]);
-        }
-        else { // pivot variable both in A and B partition
+        if (xs[i] >= partition_shared_start && xs[i] <= partition_shared_end) { // pivot variable in both partitions
             // Determine which clause contains the positive pivot literal
             int pos_pivot_interpolant = new_interpolant;
             int neg_pivot_interpolant = interpolants[cs[i+1]];
@@ -65,12 +69,18 @@ void Interpolator::chain(const vec<ClauseId> &cs, const vec<Var> &xs) {
 
             new_interpolant = encode_pivot_interpolant(xs[i], pos_pivot_interpolant, neg_pivot_interpolant);
         }
+        else if (xs[i] >= partition_b_start && xs[i] <= partition_b_end) { // pivot variable only in B partition
+            new_interpolant = encode_and_interpolant(new_interpolant, interpolants[cs[i+1]]);
+        }
+        else { // pivot variable only in A partition
+            new_interpolant = encode_or_interpolant(new_interpolant, interpolants[cs[i+1]]);
+        }
 
         // Resolve
         resolve(cl, model_clauses[cs[i+1]], xs[i]);
     }
 
-    // Add interpolant variable of new resolved clause
+    // Add interpolant (equivalent literal) of new resolved clause
     interpolants.push(new_interpolant);
 }
 
@@ -111,24 +121,24 @@ int Interpolator::encode_or_interpolant(int I1, int I2) {
         return I1;
 
     // Add new variable and clauses to encode (new_var <-> I1 OR I2); three clauses in CNF
-    int new_var = next_tseitin_var;
-    next_tseitin_var += 2;
+    int new_interpolant = next_tseitin_var * 2;
+    next_tseitin_var++;
     num_tseitin_vars++;
     interp_clauses.push();
     vec<Lit>& cl_1 = interp_clauses.last();
-    cl_1.push(toLit(new_var ^ 1));
+    cl_1.push(toLit(new_interpolant ^ 1));
     cl_1.push(toLit(I1));
     cl_1.push(toLit(I2));
     interp_clauses.push();
     vec<Lit>& cl_2 = interp_clauses.last();
-    cl_2.push(toLit(new_var));
+    cl_2.push(toLit(new_interpolant));
     cl_2.push(toLit(I1 ^ 1));
     interp_clauses.push();
     vec<Lit>& cl_3 = interp_clauses.last();
-    cl_3.push(toLit(new_var));
+    cl_3.push(toLit(new_interpolant));
     cl_3.push(toLit(I2 ^ 1));
 
-    return new_var;
+    return new_interpolant;
 }
 
 int Interpolator::encode_and_interpolant(int I1, int I2) {
@@ -140,29 +150,29 @@ int Interpolator::encode_and_interpolant(int I1, int I2) {
         return I1;
 
     // Add new variable and clauses to encode (new_var <-> I1 AND I2); three clauses in CNF
-    int new_var = next_tseitin_var;
-    next_tseitin_var += 2;
+    int new_interpolant = next_tseitin_var * 2;
+    next_tseitin_var++;
     num_tseitin_vars++;
     interp_clauses.push();
     vec<Lit>& cl_1 = interp_clauses.last();
-    cl_1.push(toLit(new_var ^ 1));
+    cl_1.push(toLit(new_interpolant ^ 1));
     cl_1.push(toLit(I1));
     interp_clauses.push();
     vec<Lit>& cl_2 = interp_clauses.last();
-    cl_2.push(toLit(new_var ^ 1));
+    cl_2.push(toLit(new_interpolant ^ 1));
     cl_2.push(toLit(I2));
     interp_clauses.push();
     vec<Lit>& cl_3 = interp_clauses.last();
-    cl_3.push(toLit(new_var));
+    cl_3.push(toLit(new_interpolant));
     cl_3.push(toLit(I1 ^ 1));
     cl_3.push(toLit(I2 ^ 1));
 
-    return new_var;
+    return new_interpolant;
 }
 
-int Interpolator::encode_pivot_interpolant(int x, int I_pos, int I_neg) {
-    // Change time frame of pivot variables from state 1 to state 0
-    x -= 2 * num_vars_in_one_state;
+int Interpolator::encode_pivot_interpolant(Var x, int I_pos, int I_neg) {
+    // Change time frame of pivot variable from state 1 to state 0
+    x = (x - imc.num_vars_in_one_state) * 2; // Times 2 to make it a literal
 
     // Add interpolant for (I1 <-> x OR I_pos)
     int I1;

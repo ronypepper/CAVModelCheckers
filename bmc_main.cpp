@@ -18,9 +18,11 @@ int main(int argc, char** argv)
     char* filename = argv[2];
 
     BoundedModelChecker bmc(filename);
-    bool is_sat = bmc.solve(k, true, false, nullptr, 0, false, nullptr, true);
-    if (is_sat)
-        printf("FAIL\n");
-    else
+    int result = bmc.solve(k, true, false, nullptr, 0, false, nullptr, true);
+    if (result == -1)
+        printf("ERROR\n");
+    else if (result == 0)
         printf("OK\n");
+    else if (result == 1)
+        printf("FAIL\n");
 }
